@@ -1,4 +1,4 @@
-# Apocalypter Vehicle Tuning Lite
+# Vehicle Tuning Lite
 
 A small BepInEx 5 mod for **Apocalypter** that makes every vehicle friendlier to
 drive with keyboard and mouse: steering response, suspension, and ABS/TCS assists —
