@@ -19,6 +19,8 @@ not in active development, and safe for mod managers to bundle as-is.
    menu) to open the panel.
 
 Everything starts **off** — the game drives exactly like vanilla until you opt in.
+When you switch a category on, it tunes the **vehicle you are driving** (the
+"Apply to: Last driven" default in the Settings tab) — parked cars stay stock.
 A good starting setup for keyboard and mouse:
 
 - **Steering** → ON, preset **Euro Truck** (or **GTA-style** for arcade feel)
@@ -39,8 +41,10 @@ the old paused behaviour.
   spring/ride-height/damping/anti-roll-bar factors, split front/rear if you want.
 - **Assists** — presets (Off, Standard, Sport, Off-road, Race, Custom) for ABS and
   traction control with per-assist thresholds.
-- **Settings** — panel hotkey (rebind by clicking), freeze toggle, transparency,
-  size, width.
+- **Settings** — "Apply to": **Last driven** (the default — only the player's
+  vehicle is tuned), All vehicles, or one Selected vehicle picked from the list.
+  Plus the panel hotkey (rebind by clicking), freeze toggle, transparency, size,
+  width.
 
 ## Config
 

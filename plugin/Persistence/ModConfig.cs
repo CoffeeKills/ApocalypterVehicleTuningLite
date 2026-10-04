@@ -49,6 +49,7 @@ namespace ApocalypterVehicleTuningLite.Persistence
         private static ConfigEntry<string> _toggleKey;
         // Read by Apocasetter via Chainloader (not wired to OnSettingChanged — we never read it).
         private static ConfigEntry<bool> _apocasetter;
+        private static ConfigEntry<string> _targetMode, _targetVehicle;
 
         public static string ToggleKeyString
         {
@@ -95,6 +96,11 @@ namespace ApocalypterVehicleTuningLite.Persistence
             WireAll();
             _apocasetter = config.Bind("General", "Apocasetter", true,
                 "Show this mod in the Apocasetter Mods menu (requires Apocasetter installed).");
+            _targetMode = config.Bind("General", "ApplyTarget", "LastDriven",
+                "What the tuning applies to: All, LastDriven (the player's vehicle — the default), or Selected vehicle.");
+            _targetVehicle = config.Bind("General", "SelectedVehicle", "",
+                "Vehicle name the tuning applies to when ApplyTarget = Selected (as shown in the panel list).");
+            Wire(_targetMode); Wire(_targetVehicle);
 
             PushAllToRuntime();
 
@@ -282,6 +288,8 @@ namespace ApocalypterVehicleTuningLite.Persistence
             _uiWidth.Value = UiSettings.PanelWidth;
             _uiAlpha.Value = UiSettings.PanelAlpha;
             _uiLastTab.Value = UiSettings.ClampTab(UiSettings.LastTab);
+            _targetMode.Value = TargetSettings.Mode.ToString();
+            _targetVehicle.Value = TargetSettings.SelectedName ?? "";
         }
 
         /// <summary>
@@ -377,6 +385,8 @@ namespace ApocalypterVehicleTuningLite.Persistence
             UiSettings.PanelWidth = _uiWidth.Value;
             UiSettings.PanelAlpha = _uiAlpha.Value;
             UiSettings.LastTab = UiSettings.ClampTab(_uiLastTab.Value);
+            TargetSettings.Mode = TargetSettings.Parse(_targetMode.Value);
+            TargetSettings.SelectedName = _targetVehicle.Value ?? "";
         }
     }
 }

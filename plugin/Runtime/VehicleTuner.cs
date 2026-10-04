@@ -52,6 +52,12 @@ namespace ApocalypterVehicleTuningLite.Runtime
             public Dictionary<WheelGroup, GroupData> Groups = new Dictionary<WheelGroup, GroupData>();
             public AssistHandles Assists;
             public AppliedCat Applied;      // categories THIS record currently has applied
+            // Driven-vehicle pick liveness: the input sum at the last sample and when it
+            // last changed. The game's FSM freezes a parked car's input at its exit values
+            // (handbrake held, brakes last pressed); only recently-changed input is "live".
+            public float InputPrev;
+            public bool InputSeen;
+            public float InputLastChange = -1f;
         }
 
         [Flags]
@@ -491,16 +497,161 @@ namespace ApocalypterVehicleTuningLite.Runtime
 
         // --------------------------------------------------------------- apply passes
 
-        /// <summary>The stable identity a log line uses (the GameObject name).</summary>
+        /// <summary>The stable identity a target selection stores (the GameObject name).</summary>
         public static string VehicleName(VehicleController vc)
         {
             return vc != null && vc.gameObject != null ? vc.gameObject.name : "";
         }
 
+        // ----------------------------------------------------- driven-vehicle pick
+
         /// <summary>
-        /// One category's per-record pass: apply idempotently (flag first — a pass that
-        /// throws half-way has still written some fields, and the flag is what makes OFF
-        /// restore them). Method groups are cached by the compiler; the preset rides along.
+        /// The vehicle the player is driving: most live input above the dead zone, else
+        /// the last vehicle that had input (a stalled/off engine keeps the pick), else a
+        /// running engine, else the fastest, else the first tracked. Allocation-free.
+        ///
+        /// "Live" is input that changed recently: the game's FSM freezes a parked car's
+        /// input at its exit values (handbrake held, brakes last pressed, …), so raw
+        /// input alone lets a parked car steal the pick from a hands-off player. A frozen
+        /// value stays live only for the 2 s hold window after its last change.
+        /// </summary>
+        private VehicleController _lastDriven;
+
+        public const float InputDeadZone = 0.05f;    // input below this is noise / hands-off
+        public const float InputHoldSeconds = 2f;    // unchanged input counts as live this long after its last change
+        public const float InputChangeEpsilon = 0.02f;
+
+        /// <summary>
+        /// Samples one vehicle's input for the pick: records the value and reports whether
+        /// it counts as live driving right now. Pure (only the caller's state fields).
+        /// </summary>
+        public static bool UpdateInputLiveness(float input, float now, ref float prev, ref bool seen, ref float lastChange, out bool live)
+        {
+            bool changed = !seen || Mathf.Abs(input - prev) > InputChangeEpsilon;
+            seen = true;
+            prev = input;
+            if (changed && input > InputDeadZone)
+            {
+                lastChange = now;
+            }
+            live = input > InputDeadZone && (changed || now - lastChange <= InputHoldSeconds);
+            return changed;
+        }
+
+        public VehicleController FindDrivenVehicle()
+        {
+            float now = Time.unscaledTime;
+            VehicleController driven = null;    // most live input above the dead zone
+            float bestInput = 0f;
+            VehicleController running = null;   // first tracked vehicle with a running engine
+            VehicleController fastest = null;
+            float bestSpeed = 0f;
+            VehicleController first = null;
+            foreach (KeyValuePair<VehicleController, VehicleRecord> kv in _records)
+            {
+                VehicleController vc = kv.Key;
+                VehicleRecord r = kv.Value;
+                if (vc == null || r == null || r.Vc == null)
+                {
+                    continue;
+                }
+                if (first == null)
+                {
+                    first = vc;
+                }
+                float input = Mathf.Abs(vc.input.Steering) + vc.input.Throttle + vc.input.Brakes + vc.input.Handbrake;
+                bool live;
+                UpdateInputLiveness(input, now, ref r.InputPrev, ref r.InputSeen, ref r.InputLastChange, out live);
+                if (live && input > bestInput)
+                {
+                    bestInput = input;
+                    driven = vc;
+                }
+                if (running == null && vc.powertrain != null && vc.powertrain.engine != null && vc.powertrain.engine.OutputRPM > 10f)
+                {
+                    running = vc;
+                }
+                if (vc.Speed > bestSpeed)
+                {
+                    bestSpeed = vc.Speed;
+                    fastest = vc;
+                }
+            }
+            if (driven != null)
+            {
+                _lastDriven = driven;
+                return driven;
+            }
+            // No live input anywhere: stay on the last car the player drove (its engine
+            // may have stalled, or the panel is open and hands are on the mouse).
+            if (_lastDriven != null)
+            {
+                VehicleRecord r;
+                if (_records.TryGetValue(_lastDriven, out r) && r != null && r.Vc != null)
+                {
+                    return _lastDriven;
+                }
+                _lastDriven = null;
+            }
+            if (running != null)
+            {
+                return running;
+            }
+            return bestSpeed > 0.01f ? fastest : first;
+        }
+
+        /// <summary>Does the current target selection cover this vehicle?</summary>
+        public bool IsTarget(VehicleController vc)
+        {
+            switch (TargetSettings.Mode)
+            {
+                case TargetMode.LastDriven:
+                    return vc != null && vc == FindDrivenVehicle();
+                case TargetMode.Selected:
+                    return vc != null && string.Equals(TargetSettings.SelectedName, VehicleName(vc), StringComparison.Ordinal);
+                default:
+                    return true;
+            }
+        }
+
+        /// <summary>Names of every tracked vehicle, in first-seen order (panel list; UI path).</summary>
+        public List<string> TrackedNames()
+        {
+            List<string> names = new List<string>(_order.Count);
+            for (int i = 0; i < _order.Count; i++)
+            {
+                VehicleRecord r = _order[i];
+                if (r != null && r.Vc != null && !names.Contains(VehicleName(r.Vc)))
+                {
+                    names.Add(VehicleName(r.Vc));
+                }
+            }
+            return names;
+        }
+
+        /// <summary>Vehicles the current target selection covers (the panel status lines).</summary>
+        public int TargetedCount
+        {
+            get
+            {
+                int n = 0;
+                foreach (KeyValuePair<VehicleController, VehicleRecord> kv in _records)
+                {
+                    if (kv.Key != null && kv.Value.Vc != null && IsTarget(kv.Key))
+                    {
+                        n++;
+                    }
+                }
+                return n;
+            }
+        }
+
+        /// <summary>
+        /// One category's per-record pass under the current target: targets get the
+        /// category applied (idempotently) and their bit set; records that were
+        /// applied but are no longer targets get restored and their bit cleared.
+        /// Flag first: a pass that throws half-way has still written some fields,
+        /// and the flag is what makes OFF restore them.
         /// </summary>
         private void TargetPass<T>(AppliedCat cat, Action<VehicleRecord, T> apply, T preset, Action<VehicleRecord> restore)
         {
@@ -511,9 +662,18 @@ namespace ApocalypterVehicleTuningLite.Runtime
                 {
                     continue;
                 }
-                r.Applied |= cat;
-                try { apply(r, preset); }
-                catch (Exception ex) { LogFault(cat + " apply", kv.Key, ex); }
+                if (IsTarget(kv.Key))
+                {
+                    r.Applied |= cat;
+                    try { apply(r, preset); }
+                    catch (Exception ex) { LogFault(cat + " apply", kv.Key, ex); }
+                }
+                else if ((r.Applied & cat) != 0)
+                {
+                    r.Applied &= ~cat;
+                    try { restore(r); }
+                    catch (Exception ex) { LogFault(cat + " restore", kv.Key, ex); }
+                }
             }
         }
 
@@ -526,9 +686,18 @@ namespace ApocalypterVehicleTuningLite.Runtime
                 {
                     continue;
                 }
-                r.Applied |= cat;
-                try { apply(r); }
-                catch (Exception ex) { LogFault(cat + " apply", kv.Key, ex); }
+                if (IsTarget(kv.Key))
+                {
+                    r.Applied |= cat;
+                    try { apply(r); }
+                    catch (Exception ex) { LogFault(cat + " apply", kv.Key, ex); }
+                }
+                else if ((r.Applied & cat) != 0)
+                {
+                    r.Applied &= ~cat;
+                    try { restore(r); }
+                    catch (Exception ex) { LogFault(cat + " restore", kv.Key, ex); }
+                }
             }
         }
 

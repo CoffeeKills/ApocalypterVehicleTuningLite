@@ -41,6 +41,7 @@ namespace ApocalypterVehicleTuningLite.Runtime
         private readonly Action _requestClose;
         private readonly Action _onModeChanged;
         private readonly List<Action> _refreshers = new List<Action>();
+        private int _targetNameIndex;   // selected-vehicle cycle position (targeting)
         private readonly List<Action<float>> _relayouts = new List<Action<float>>();   // arg: content width
         private bool _suppress;
 
@@ -886,7 +887,7 @@ namespace ApocalypterVehicleTuningLite.Runtime
             Text status = AddNote(content, "Status", 44f, 14);
             _refreshers.Add(() =>
             {
-                int n = _tuner.TrackedVehicles;
+                int n = _tuner.TargetedCount;
                 status.text = !SuspensionSettings.Enabled
                     ? "Suspension tuning is off. Vehicles use their original setup."
                     : n == 0
@@ -1001,7 +1002,7 @@ namespace ApocalypterVehicleTuningLite.Runtime
             Text status = AddNote(content, "Status", 44f, 14);
             _refreshers.Add(() =>
             {
-                int n = _tuner.TrackedVehicles;
+                int n = _tuner.TargetedCount;
                 status.text = !AssistsSettings.Enabled
                     ? "Assists are off. The game's own ABS/TCS still work if a vehicle has them."
                     : n == 0
@@ -1014,6 +1015,61 @@ namespace ApocalypterVehicleTuningLite.Runtime
 
         private void BuildPanelTab(RectTransform content)
         {
+            AddSectionTitle(content, "Apply to");
+            AddPresetButtons(content, "ApplyTarget", 3, 3, 3,
+                i => TargetSettings.ModeName((TargetMode)i),
+                () => (int)TargetSettings.Mode,
+                i =>
+                {
+                    TargetSettings.Mode = (TargetMode)i;
+                    if (TargetSettings.Mode != TargetMode.Selected && _targetNameIndex > 0)
+                    {
+                        _targetNameIndex = 0;
+                    }
+                    _tuner.ApplyLive();
+                    Refresh();
+                });
+            GameObject targetRow = AddBlock(content, "TargetVehicle", 58f, true, out LayoutElement _).gameObject;
+            BindVisible(targetRow, () => TargetSettings.Mode == TargetMode.Selected);
+            RectTransform tr = (RectTransform)targetRow.transform;
+            RectTransform tl = UiKit.Place(UiKit.Make("T", tr), 0f, 0.5f, 1f, 1f, 16f, 0f, 100f, 6f);
+            UiKit.Label(tl, "Vehicle", 17, UiKit.TextMain, TextAnchor.MiddleLeft, FontStyle.Bold);
+            Button targetBtn = UiKit.MakeButton(tr, "VehicleBtn", "", UiKit.ChipBase, 15, () =>
+            {
+                List<string> names = _tuner.TrackedNames();
+                if (names.Count > 0)
+                {
+                    _targetNameIndex = (_targetNameIndex + 1) % names.Count;
+                    TargetSettings.SelectedName = names[_targetNameIndex];
+                    _tuner.ApplyLive();
+                    Refresh();
+                }
+            }, out Text targetNameLabel);
+            UiKit.RightBox((RectTransform)targetBtn.transform, 220f, 34f, 14f);
+            Text targetHint = AddNote(content, "TargetHint", 26f, 13);
+            _refreshers.Add(() =>
+            {
+                List<string> names = _tuner.TrackedNames();
+                if (names.Count == 0)
+                {
+                    targetNameLabel.text = "-";
+                    targetHint.text = "No vehicles found yet.";
+                    return;
+                }
+                if (_targetNameIndex >= names.Count)
+                {
+                    _targetNameIndex = 0;
+                }
+                if (TargetSettings.SelectedName == "" || !names.Contains(TargetSettings.SelectedName))
+                {
+                    TargetSettings.SelectedName = names[_targetNameIndex];
+                }
+                targetNameLabel.text = TargetSettings.SelectedName;
+                targetHint.text = TargetSettings.Mode == TargetMode.Selected
+                    ? "Only this vehicle is tuned. Click the button to pick another."
+                    : "";
+            });
+
             AddSectionTitle(content, "Settings");
             GameObject keyRow = AddBlock(content, "ToggleKey", 58f, true, out LayoutElement _).gameObject;
             RectTransform kr = (RectTransform)keyRow.transform;
